@@ -1,0 +1,211 @@
+---
+title: "Regresión 2"
+author: "rvfe"
+date: "2024-05-03"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+
+```{r}
+load('datosCompletos.RData')
+
+```
+
+
+NO ESTÁN TODAS LAS VARIABLES
+
+
+```{r}
+library(corrplot)
+seleccion1 = datosFILTRADOSPAU[,c(41:42, 6:10, 14:15, 17:20 , 22:24, 29:37 , 39:40 , 44, 45, 73:75 )]
+
+seleccion1 = data.frame(lapply(seleccion1 , as.numeric))
+
+corrplot(cor(seleccion1) , method = 'color' , tl.cex = 0.5)
+
+
+
+# dataVERCORR = data.frame(lapply(datosFILTRADOSPAU[,c(50:69)] , as.numeric))
+# corrplot(cor(dataVERCORR) , method = 'color' , tl.cex = 0.7)
+
+```
+
+CREAR NUEVAS COLUMNAS CON PESOS PARA QUE MÁGICAMENTE DE MEJOR EL MODELO
+
+```{r}
+datosFILTRADOSPAU$Valenciano <- as.numeric(datosFILTRADOSPAU$Valenciano)
+datosFILTRADOSPAU$Francés <- as.numeric(datosFILTRADOSPAU$Francés)
+datosFILTRADOSPAU$Alemán <- as.numeric(datosFILTRADOSPAU$Alemán)
+datosFILTRADOSPAU$Italiano <- as.numeric(datosFILTRADOSPAU$Italiano)
+datosFILTRADOSPAU$Aula_Idiomas <- as.numeric(datosFILTRADOSPAU$Aula_Idiomas)
+
+datosFILTRADOSPAU$Valor_Idiomas <- (datosFILTRADOSPAU$Valenciano * 0.5 +
+                                 datosFILTRADOSPAU$Francés * 0.5 +
+                                 datosFILTRADOSPAU$Alemán +
+                                 datosFILTRADOSPAU$Italiano +
+                                 datosFILTRADOSPAU$Aula_Idiomas) - 4
+
+
+
+datosFILTRADOSPAU$PercAptos = datosFILTRADOSPAU$Aptos / datosFILTRADOSPAU$Matriculados
+
+
+```
+
+
+
+```{r}
+datosFILTRADOSPAU$Valor_Deporte = datosFILTRADOSPAU$Futbol * 0.3 + datosFILTRADOSPAU$Baloncesto + datosFILTRADOSPAU$Baile + datosFILTRADOSPAU$Patinaje + datosFILTRADOSPAU$Judo * 1.3
+  
+```
+
+
+
+
+```{r}
+variables <- c("MediaNotaBACH", "NotaReviews", "Paradas_bus", "Comedor", "PercAptos", "Religion", "index_glob" , "EI" , "Valor_Idiomas" , "Valor_Deporte")
+
+prueba = datosFILTRADOSPAU[ , variables]
+
+prueba = data.frame(lapply(prueba , as.numeric))
+
+corrplot(cor(prueba) , method = 'color')
+
+```
+
+# 
+# MODELO
+#
+
+
+```{r}
+library(caret)
+library(dplyr)
+
+set.seed(123)
+
+ctrl <- trainControl(method = "LOOCV")
+
+datos_entrenamiento = datosFILTRADOSPAU
+
+
+formula = MediaNotaBACH ~ Tipo + NotaReviews +  Paradas_bus + Comedor + Gimnasio + PercAptos + Religion + index_glob + EI + Valor_Idiomas + Valor_Deporte
+
+modelo <- train(formula, data = datos_entrenamiento, method = "lm", trControl = ctrl)
+
+
+summary(modelo)
+
+```
+
+
+RMSE DEL MODELO
+
+```{r}
+a = predict(modelo, newdata = datos_entrenamiento)
+
+
+c = a - datosFILTRADOSPAU$MediaNotaBACH
+
+r = sqrt (mean (c^2))
+
+r
+```
+
+
+
+PRUEBA RED NEURONAL (IGNORAR)
+
+```{r}
+library(neuralnet)
+
+
+formula = MediaNotaBACH ~ NotaReviews + index_glob + index_soci + PercAptos + Valor_Deporte + Valor_Idiomas
+
+
+m = neuralnet(formula, data = datos_entrenamiento, hidden = 3)
+
+# summary(m)
+
+pred = compute(m, datos_entrenamiento)
+
+a = pred$net.result - datos_entrenamiento$MediaNotaBACH
+
+r = sqrt (mean (a^2))
+
+r
+```
+
+MODELO CON LA MEDIA
+
+```{r}
+b = mean(datos_entrenamiento$MediaNotaBACH) - datos_entrenamiento$MediaNotaBACH
+r = sqrt (mean (b^2))
+
+r
+
+```
+
+VER GRÁFICOS DE DISPERSIÓN DE NOTASBACH CON CADA VARIABLE
+
+
+```{r}
+# Instalar y cargar la librería ggplot2 si aún no está instalada
+# install.packages("ggplot2")
+library(ggplot2)
+
+# Supongamos que tu dataset se llama 'datos' y la variable respuesta se llama 'respuesta'
+# Reemplaza 'datos' y 'respuesta' con los nombres reales de tu dataset y variable respuesta
+
+# Iterar sobre todas las variables excepto la variable respuesta
+
+
+for (nombre in names(datosFILTRADOSPAU)) {
+  
+  
+  variable = datosFILTRADOSPAU[ ,nombre]
+  # Crear un gráfico de dispersión para cada variable respecto a la variable respuesta
+    
+  p = ggplot(datosFILTRADOSPAU, aes(x = variable, y = MediaNotaBACH)) + geom_point() +
+    labs(title = paste("Gráfico de dispersión de", nombre , "respecto a respuesta"))
+
+
+  # print(p)
+}
+
+```
+
+
+
+```{r}
+plot (datosFILTRADOSPAU$Tipo, datosFILTRADOSPAU$MediaNotaBACH)
+```
+
+
+
+GRÁFICO DE RESIDUOS
+
+```{r}
+residuos <- resid(modelo)
+
+# Histograma de los residuos
+ggplot(data = data.frame(residuos), aes(x = residuos)) +
+  geom_histogram(binwidth =0.05, fill = "lightblue", color = "black") +
+  labs(title = "Histograma de Residuos", x = "Residuos", y = "Frecuencia")
+```
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,239 @@
+---
+title: "PruebaExcel"
+author: "Juan Francisco Pallardó Latorre"
+date: "2024-05-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library (dplyr)
+library (lubridate)
+library(mice)
+library(readxl)
+library (arules)
+library (ggplot2)
+library (markdown)
+library (tidyverse)
+library (gridExtra)
+library (NbClust)
+library(cluster)
+library (knitr)
+
+library(FactoMineR)
+library(factoextra)
+```
+
+```{r}
+dataEx = read_excel("rank_SEC_BACH.xlsx")
+load("datosCOMPLETOS.rdata")
+
+a = datosCOMPLETOS[datosCOMPLETOS$SEC == 1, ]
+
+a = a[,c(1, 59, 61, 76:105)]
+
+p = dataEx[ , -c(32,34)]
+
+b = merge ( p , a , by = 'Identificador')
+
+b = na.omit(b)
+```
+
+He eliminado variables como Nombre, Identificador, Latitud, Longitud, barrio, Direccion, NotaReviews, NumReviews y Mixto.
+```{r}
+eliminar_v = c(1,2,4,5,14, 31:35, 50, 51, 54, 77, 78 )
+prueba = b[, -eliminar_v]
+```
+
+
+Arreglo de las variables Inst+Gimnasio, Gimnas+Piscina y Inst+Gimnas+Piscina.
+```{r}
+for (i in 1:length(prueba$`Inst + Gimnasio`)) {
+  if (prueba$`Inst + Gimnasio`[i] == 1) {
+    prueba$`Instalaciones deportivas`[i] <- 1
+  }
+}
+
+for (i in 1:length(prueba$`Inst + Gimnasio`)) {
+  if (prueba$`Gimnas + Piscina`[i] == 1) {
+    prueba$Piscina[i] <- 1
+    prueba$`Inst + Gimnasio`[i] <- 1
+  }
+}
+prueba = subset(prueba, select = - `Gimnas + Piscina`)
+
+for (i in 1:length(prueba$Piscina)) {
+  if (prueba$`Inst + Gimnas + Piscina`[i] == 1) {
+    prueba$Piscina[i] <- 1
+    prueba$`Instalaciones deportivas`[i] <- 1
+    prueba$`Inst + Gimnasio`[i] = 1
+  }
+}
+prueba = subset(prueba, select = - `Inst + Gimnas + Piscina`)
+names(prueba)[6] = "Gimnasio"
+```
+
+Ahora creamos las variables dummy de las variables Tipo, index_gl_1, Religion, Precio y Horario. (One-Hot encoding)
+```{r}
+var_dummy = as.data.frame(model.matrix(~ Tipo -1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "Tipo")], var_dummy)
+
+var_dummy = as.data.frame(model.matrix(~ index_gl_1 - 1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "index_gl_1")], var_dummy)
+
+
+var_dummy = as.data.frame(model.matrix(~ Religion - 1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "Religion")], var_dummy)
+
+var_dummy = as.data.frame(model.matrix(~ Precio - 1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "Precio")], var_dummy)
+
+var_dummy = as.data.frame(model.matrix(~ Horario - 1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "Horario")], var_dummy)
+```
+
+Elimino algunas variables dummy que son redundantes como: TipoPúblico, ReligiosoLaico, PrecioEntre 100 y 300€ y Horario Ampliado Mañana y tarde. Además de instalaciones deportivas.
+```{r}
+prueba_bin = prueba[,-c(2, 59, 63, 65, 68)]
+```
+
+
+
+Hago el escalado y centrado de los datos, usare la distancia de Manhattan (ver diferencias con Euclídea). Printeo una matriz de todas las instancias y su distancia.
+```{r}
+schools_cluster = scale(prueba_bin,center=TRUE, scale=TRUE)
+midist <- get_dist(schools_cluster, stand = FALSE, method = "manhattan")
+fviz_dist(midist, show_labels = TRUE, lab_size = 0.3,
+          gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"))
+```
+
+En el gráfico obtenido a partir de las distancias podemos observar posibles agrupaciones entre centros que serían los cuadrados azules que se forman a través de la diagonal principal de la matriz.
+El siguiente paso será realizar un método de partición, en concreto realizaremos el algoritmo **k-medias**. Sin embargo, previo a realizarlo hay que determinar el número óptimo de clusters. Para ello nos basaremos en el coeficiente de Silhouette (A mayor más relación entre clusters) y en la Suma de Cuadrados Residual (A menor mejor).
+```{r}
+p1 = fviz_nbclust(x = schools_cluster, FUNcluster = kmeans, method = "silhouette", 
+             k.max = 8, verbose = FALSE) +
+  labs(title = "K-means")
+p2 = fviz_nbclust(x = schools_cluster, FUNcluster = kmeans, method = "wss", 
+             k.max = 8, verbose = FALSE) +
+  labs(title = "K-means")
+p3 = fviz_nbclust(x = schools_cluster, FUNcluster = pam, method = "silhouette", 
+             k.max = 8, verbose = FALSE, diss = midist) +
+  labs(title = "K-Medoides - Silhouette")
+
+p4 = fviz_nbclust(x = schools_cluster, FUNcluster = pam, method = "wss", 
+             k.max = 8, verbose = FALSE, diss = midist) +
+  labs(title = "K-Medoides - Sum")
+
+grid.arrange(p1,p2,nrow = 1)
+grid.arrange(p3,p4,nrow = 1)
+```
+
+```{r}
+set.seed(100)
+clust3 <- kmeans(midist, centers = 6, nstart = 20)
+table(clust3$cluster)
+```
+```{r}
+p1 = fviz_cluster(object = list(data=schools_cluster, cluster=clust3$cluster), stand = FALSE,
+             ellipse.type = "convex", geom = "point", show.clust.cent = FALSE,
+             labelsize = 8)  +
+  labs(title = "K-MEDIAS + Proyeccion PCA",
+       subtitle = "Dist manhattan, K=4") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+p2 = fviz_cluster(object = list(data=schools_cluster, cluster=clust3$cluster), stand = FALSE,
+             ellipse.type = "convex", geom = "point", show.clust.cent = FALSE,
+             labelsize = 8, axes = 3:4)  +
+  labs(title = "K-MEDIAS + Proyeccion PCA",
+       subtitle = "Dist manhattan, K=4") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+```{r}
+plot(silhouette(clust3$cluster, midist), col=rainbow(6), border=NA, main = "K-MEDIAS")
+clust4 <- pam(schools_cluster, k = 4)
+plot(silhouette(clust4$clustering, midist), col=rainbow(4), border=NA, main = "K-MEDOIDES")
+
+
+
+
+sil = data.frame(silhouette(clust3$cluster, midist))
+
+mal = sil$sil_width < -0.045
+malClasifiS = sil[mal,]
+```
+
+```{r}
+misclust = factor(clust3$cluster)
+
+mediasCluster = aggregate(schools_cluster, by = list("cluster" = misclust), mean)[,-1]
+rownames(mediasCluster) = paste0("c",1:6)
+kable(t(round(mediasCluster,2)))
+```
+
+```{r}
+par(mar = c(5, 4, 4, 2) + 0.1)
+matplot(t(mediasCluster), type = "l", col = rainbow(6), ylab = "", xlab = "", lwd = 2,
+        lty = 1, main = "Perfil medio de los clusters", xaxt = "n")
+axis(side = 1, at = 1:ncol(schools_cluster), labels = FALSE)
+text(x = 1:ncol(schools_cluster), y = par("usr")[3] - 0.3, 
+     labels = colnames(schools_cluster), srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+legend("topleft", as.character(1:6), col = rainbow(6), lwd = 2, ncol = 3, bty = "n")
+```
+-Cluster 1 (rojo): Generalmente no presentan comedor, pero si cafetería. En cuanto idiomas no presentan Alemán pero si Italiano. Centros de secundaria y bachiller. Numero de alumnado bajo, las medias de bachiller son las mas bajas y en cuanto a la PAU las segundas mas bajas.. Barrios con un paro elevado, renta_media la mas baja, pobreza la mas alta. En cuanto a los indices podemos decir que son bajos lo que hace que sean potencialmente vulnerables. No muchas extraescolares. Comedor de catering. Poco numero de becas, así como numero de instalaciones bajo. Centro públicos y laicos. Precio <100€.
+
+-Cluster 2 (amarillo): Generalmente no presentan comedor, pero si cafeteria. Linea en castellano sin ofrecer otros idiomas (francés, italiano o aleman). Centros de secundaria y bachiller, además cuentan con FP. Se sitúan en barrios poco poblados y con un paro bajo, en cuanto a la renta medio-alto, con indice de pobreza bajo. Indices social y glob altos lo que hace que el barrio fuera no vulnerable. Bien conectados por bus y metro. Media de expediente generalmente baja (segunda peor) parecido en la PAU. Centros sin una gran cantidad de instalaciones. Centros públicos, laicos y con precio <100€.
+
+-Cluster 3 (verde): Centros con comedor, pero sin cafeteria. Usualmente con transporte privado. Gran numero de instalaciones (aula de idiomas, salon de actos, pilota...) Con líneas en castellano y valenciano. Generalmente ofrecen idiomas (frances, aleman e italiano). Estos centros abarcan desde EI hasta bachiller, pero carecen de FP. Gran número de matriculados, con una buena nota de bachiller (segunda mejor), pero en la PAU bajan siendo la peor. Gran numero de extraescolares e instalaciones/servicios. En cuanto a los barrios no destacan en nada pero no son vulnerables. Centros privados y religiosos. Capacidad de tratar con alumnos con necesidades especiales. Precios elevados.
+
+-Cluster 4 (azul-claro): Centros con comedor, pero sin cafeteria. Usualmente con transporte privado. Generalmente sin salon de actos ni aula de idiomas entre otras instalaciones. Destacan por ser institutos con alemán. Son centros desde infantil hasta bachiller con un bajo numero de alumnos. Barrios donde la densidad de población es elevada así como el paro. Usualmente un renta media baja. En cuanto a los indices generalmente bajos lo que hace que se sitúen en barrios vulnerables. Media de expediente normal pero la nota de la PAU alta. Ofrece algunas extraescolares. Son centros privaods y religiosos, pero precio inferior a los 100€.
+
+-Cluster 5 (azul-oscuro): Centros con algunas instalaciones (Salon de actos, gimnasio, pilota, piscina...). Se suelen realizar cursos de verano. No destacan en ningun idioma. Linea en castellano. Son centros desde infantil hasta bachiller con FP, media de bachiller y PAU elevadas. Se sitúan en barrios de población alta y buena renta media. En cuanto a los indices generalmente altos lo que hace que los barrios sean vulnerables y no vulnerables. No están muy bien comunicados (cuentan con transporte privado). No ofrecen muchas extraescolares y servicios. Son centros privados y religiosos, pero precio inferior a los 100€.
+
+-Cluster 6 (rosa): Centros con comedor, sin transporte ni gimnasio. Presentan algunas instalaciones como salon de actos, aula de idiomas... Solo línea castellana pero ofrecen generlamente alemán como segunda lengua. Centros desde EI hasta Bachiller, con un elevado numero de alumnos pero su nota de expediente y PAU no muy destacables. Se sitúan en barrios con una densidad de poblacion baja, paro bajo y renta media superior al resto de clusters.  Indices generalmente altos lo que hace que sean barrios no vulnerables o potencialmente vulnerables. Se sitúan en zonas mal comunicadas. Ofrecen muchas extraescolares y servicios. Tienen capacidad de tratar con alumnos con necesidades especiales. Son centros privados laicos y religioso, cuyo precio es inferior a los 100€. Horario ampliado.
+
+```{r}
+res.pca = PCA(prueba_bin, scale.unit = TRUE, graph = FALSE, ncp = 10)
+eig.val <- get_eigenvalue(res.pca)
+VPmedio = 100 * (1/nrow(eig.val))
+fviz_eig(res.pca, addlabels = TRUE) +
+  geom_hline(yintercept=VPmedio, linetype=2, color="red")
+kable(eig.val[1:6,])
+K = 4
+res.pca = PCA(prueba_bin, scale.unit = TRUE, graph = FALSE, ncp = K)
+```
+
+```{r}
+fviz_pca_var(res.pca, axes = c(1,2), repel = TRUE, col.var = "contrib",
+              
+             select.var = list(contrib = 16) ,
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             
+             labelsize = 4,
+             
+             title = 'Variables PCA - Loadings PC1 y PC2')
+
+
+fviz_pca_var(res.pca, axes = c(3,4), repel = TRUE, col.var = "contrib",
+             select.var = list(contrib=16),
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             
+             labelsize = 4,
+             
+             title = 'Variables PCA - Loadings PC3 y PC4')
+```
+
+```{r}
+n_clusters = as.data.frame(clust3$cluster)
+```
+
+
+```{r}
+#library(xlsx)
+#write.xlsx(prueba_bin, "DatosSecundaria.xlsx", row.names = FALSE)
+```
+
+

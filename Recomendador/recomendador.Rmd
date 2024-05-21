@@ -1,0 +1,157 @@
+---
+title: "recomendador"
+author: "elena"
+date: "2024-05-13"
+output: html_document
+---
+
+```{r}
+
+library(readxl)
+library(shiny)
+library(readxl)
+data_secundaria_bachiller <- read_excel("DatosSecundaria.xlsx")
+
+
+data_primaria <- read_excel("DatosInfPrim.xlsx")
+
+```
+
+
+
+
+El código implementa una aplicación web en Shiny que recomienda colegios en Valencia basándose en criterios seleccionados por el usuario. 
+
+
+
+
+```{r}
+library(shiny)
+library(readxl)
+
+# Definir los servicios e idiomas disponibles
+servicios_disponibles <- c("Biblioteca", "Laboratorio / taller", "Aula de informática", 
+                           "Aula de música", "Comedor", "Instalaciones deportivas", 
+                           "Transporte", "Cafetería", "Salón de actos", 
+                           "Pilota", "Cursos de verano", "Huerto escolar", "Aula de idiomas", 
+                           "Piscina")
+
+idiomas_disponibles <- c("Castellano", "Valenciano", "Inglés", "Francés", "Alemán", 
+                         "Chino", "Italiano")
+
+# Interfaz de usuario
+ui <- fluidPage(
+  titlePanel("Recomendador de Colegios en Valencia"),
+  sidebarLayout(
+    sidebarPanel(
+      selectInput("nivel", "Selecciona el nivel educativo:", 
+                  choices = c("Primaria", "Secundaria", "Bachiller")),
+      selectInput("criterios", "¿Tienes algún criterio específico?", 
+                  choices = c("No", "Sí")),
+      conditionalPanel(
+        condition = "input.criterios == 'Sí'",
+        selectInput("tipo", "Selecciona el tipo de colegio:", 
+                    choices = c("Público", "Privado")),
+        checkboxGroupInput("servicios", "Selecciona los servicios deseados:",
+                           choices = servicios_disponibles),
+        checkboxGroupInput("idiomas", "Selecciona los idiomas deseados:",
+                           choices = idiomas_disponibles)
+      )
+    ),
+    mainPanel(
+      textOutput("resultado"),
+      tableOutput("tabla_cluster") # Añadir salida para la tabla de colegios del mismo cluster
+    )
+  )
+)
+
+# Lógica del servidor ajustada para devolver solo el colegio mejor clasificado y otros colegios del mismo cluster
+server <- function(input, output) {
+  output$resultado <- renderText({
+    nivel_educativo <- input$nivel
+    tiene_criterios <- input$criterios
+    
+    if (tiene_criterios == "No") {
+      data <- if (nivel_educativo == "Primaria") data_primaria else data_secundaria_bachiller
+      mejor_colegio <- data[1, "Nombre"]  # Asumiendo que los datos ya están ordenados por ranking
+      cluster <- data[1, "cluster"]
+      return(paste("El mejor colegio para", nivel_educativo, "es:", mejor_colegio, "y pertenece al cluster", cluster))
+    }
+    
+    tipo_colegio <- input$tipo
+    servicios_seleccionados <- input$servicios
+    idiomas_seleccionados <- input$idiomas
+    data <- if (nivel_educativo == "Primaria") data_primaria else data_secundaria_bachiller
+    
+    # Verificar que las columnas de servicios e idiomas existen en el conjunto de datos
+    servicios_existentes <- servicios_seleccionados[servicios_seleccionados %in% colnames(data)]
+    idiomas_existentes <- idiomas_seleccionados[idiomas_seleccionados %in% colnames(data)]
+    
+    data_filtrada <- data[data$Tipo == tipo_colegio, ]
+    
+    # Aplicar filtros de servicios
+    for (servicio in servicios_existentes) {
+      if (nrow(data_filtrada) == 0) break
+      data_filtrada <- data_filtrada[data_filtrada[[servicio]] == 1, ]
+    }
+    
+    # Aplicar filtros de idiomas
+    for (idioma in idiomas_existentes) {
+      if (nrow(data_filtrada) == 0) break
+      data_filtrada <- data_filtrada[data_filtrada[[idioma]] == 1, ]
+    }
+    
+    if (nrow(data_filtrada) == 0) {
+      resultados <- "No se encontraron colegios que coincidan con todos los filtros seleccionados. Les mostramos algunos colegios que le podrían interesar"
+      
+      # Encontrar el primer colegio que coincida con el tipo seleccionado
+      primer_colegio <- data[data$Tipo == tipo_colegio, ][1, ]
+      cluster <- primer_colegio$cluster
+      
+      # Filtrar colegios del mismo cluster del conjunto de datos completo
+      colegios_mismo_cluster <- subset(data, cluster == cluster)$Nombre
+      colegios_mismo_cluster <- colegios_mismo_cluster[colegios_mismo_cluster != primer_colegio$Nombre]
+      colegios_mismo_cluster <- head(colegios_mismo_cluster, 10)  # Limitar a los top 10
+      
+      # Convertir a data frame para mostrar en la tabla
+      colegios_mismo_cluster <- data.frame(Nombre = colegios_mismo_cluster)
+      
+      # Actualizar la salida de la tabla
+      output$tabla_cluster <- renderTable({
+        colegios_mismo_cluster
+      })
+    } else {
+      mejor_colegio <- data_filtrada[1, "Nombre"]
+      cluster <- data_filtrada[1, "cluster"]
+      
+      # Filtrar colegios del mismo cluster del conjunto de datos completo
+      colegios_mismo_cluster <- subset(data, cluster == cluster)$Nombre
+      colegios_mismo_cluster <- colegios_mismo_cluster[colegios_mismo_cluster != mejor_colegio]
+      colegios_mismo_cluster <- head(colegios_mismo_cluster, 10)  # Limitar a los top 10
+      
+      # Convertir a data frame para mostrar en la tabla
+      colegios_mismo_cluster <- data.frame(Nombre = colegios_mismo_cluster)
+      
+      # Actualizar la salida de la tabla
+      output$tabla_cluster <- renderTable({
+        colegios_mismo_cluster
+      })
+      
+      resultados <- paste("El mejor colegio para", nivel_educativo, "de tipo", tipo_colegio, 
+                          "con los siguientes servicios e idiomas:", paste(c(servicios_existentes, idiomas_existentes), collapse=", "), 
+                          "es:", mejor_colegio, "y pertenece al cluster", cluster, 
+                          ". Otros colegios con alto grado de similitud al colegio seleccionado se muestran en la tabla.")
+    }
+    
+    resultados
+  })
+}
+
+shinyApp(ui = ui, server = server)
+
+```
+
+
+```{r}
+```
+

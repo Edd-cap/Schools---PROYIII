@@ -1,0 +1,301 @@
+---
+title: "PruebaExcel"
+author: "Juan Francisco Pallardó Latorre"
+date: "2024-05-16"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library (dplyr)
+library (lubridate)
+library(mice)
+library(readxl)
+library (arules)
+library (ggplot2)
+library (markdown)
+library (tidyverse)
+library (gridExtra)
+library (NbClust)
+library(cluster)
+library (knitr)
+
+library(FactoMineR)
+library(factoextra)
+```
+
+```{r}
+dataEx = read_excel("rank_SEC_BACH.xlsx")
+load("datosCOMPLETOS.rdata")
+
+a = datosCOMPLETOS[datosCOMPLETOS$SEC == 1, ]
+
+a = a[,c(1, 59, 61, 76:105)]
+
+p = dataEx[ , -c(32,34)]
+
+b = merge ( p , a , by = 'Identificador')
+
+b = na.omit(b)
+```
+
+He eliminado variables como Nombre, Identificador, Latitud, Longitud, barrio, Direccion, NotaReviews, NumReviews y Mixto.
+```{r}
+eliminar_v = c(1,2,4,5,14, 31:35, 50, 51, 54, 77, 78 )
+prueba = b[, -eliminar_v]
+```
+
+
+Arreglo de las variables Inst+Gimnasio, Gimnas+Piscina y Inst+Gimnas+Piscina.
+```{r}
+for (i in 1:length(prueba$`Inst + Gimnasio`)) {
+  if (prueba$`Inst + Gimnasio`[i] == 1) {
+    prueba$`Instalaciones deportivas`[i] <- 1
+  }
+}
+
+for (i in 1:length(prueba$`Inst + Gimnasio`)) {
+  if (prueba$`Gimnas + Piscina`[i] == 1) {
+    prueba$Piscina[i] <- 1
+    prueba$`Inst + Gimnasio`[i] <- 1
+  }
+}
+prueba = subset(prueba, select = - `Gimnas + Piscina`)
+
+for (i in 1:length(prueba$Piscina)) {
+  if (prueba$`Inst + Gimnas + Piscina`[i] == 1) {
+    prueba$Piscina[i] <- 1
+    prueba$`Instalaciones deportivas`[i] <- 1
+    prueba$`Inst + Gimnasio`[i] = 1
+  }
+}
+prueba = subset(prueba, select = - `Inst + Gimnas + Piscina`)
+names(prueba)[6] = "Gimnasio"
+```
+
+Ahora creamos las variables dummy de las variables Tipo, index_gl_1, Religion, Precio y Horario. (One-Hot encoding)
+```{r}
+var_dummy = as.data.frame(model.matrix(~ Tipo -1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "Tipo")], var_dummy)
+
+var_dummy = as.data.frame(model.matrix(~ index_gl_1 - 1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "index_gl_1")], var_dummy)
+
+
+var_dummy = as.data.frame(model.matrix(~ Religion - 1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "Religion")], var_dummy)
+
+var_dummy = as.data.frame(model.matrix(~ Precio - 1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "Precio")], var_dummy)
+
+var_dummy = as.data.frame(model.matrix(~ Horario - 1, data=prueba))
+prueba = cbind(prueba[-which(names(prueba) == "Horario")], var_dummy)
+```
+
+Elimino algunas variables dummy que son redundantes como: TipoPúblico, ReligiosoLaico, PrecioEntre 100 y 300€ y Horario Ampliado Mañana y tarde. Además de instalaciones deportivas.
+```{r}
+prueba_bin = prueba[,-c(2, 59, 63, 65, 68)]
+```
+
+Elimino las variables socioeconómicas: paro, renta_media, riesgo_pobreza, index_equi, index_soci, index_glob, index_gl_1 y precio gratuito o < 100€.
+```{r}
+prueba_bin = prueba_bin[, -c(25:30,58:60, 62)]
+```
+
+
+Hago el escalado y centrado de los datos, usare la distancia de Manhattan (ver diferencias con Euclídea). Printeo una matriz de todas las instancias y su distancia.
+```{r}
+schools_cluster = scale(prueba_bin,center=TRUE, scale=TRUE)
+midist <- get_dist(schools_cluster, stand = FALSE, method = "manhattan")
+fviz_dist(midist, show_labels = TRUE, lab_size = 0.3,
+          gradient = list(low = "#00AFBB", mid = "white", high = "#FC4E07"))
+```
+
+En el gráfico obtenido a partir de las distancias podemos observar posibles agrupaciones entre centros que serían los cuadrados azules que se forman a través de la diagonal principal de la matriz.
+El siguiente paso será realizar un método de partición, en concreto realizaremos el algoritmo **k-medias**. Sin embargo, previo a realizarlo hay que determinar el número óptimo de clusters. Para ello nos basaremos en el coeficiente de Silhouette (A mayor más relación entre clusters) y en la Suma de Cuadrados Residual (A menor mejor).
+```{r}
+p1 = fviz_nbclust(x = schools_cluster, FUNcluster = kmeans, method = "silhouette", 
+             k.max = 8, verbose = FALSE) +
+  labs(title = "K-means")
+p2 = fviz_nbclust(x = schools_cluster, FUNcluster = kmeans, method = "wss", 
+             k.max = 8, verbose = FALSE) +
+  labs(title = "K-means")
+p3 = fviz_nbclust(x = schools_cluster, FUNcluster = pam, method = "silhouette", 
+             k.max = 8, verbose = FALSE, diss = midist) +
+  labs(title = "K-Medoides - Silhouette")
+
+p4 = fviz_nbclust(x = schools_cluster, FUNcluster = pam, method = "wss", 
+             k.max = 8, verbose = FALSE, diss = midist) +
+  labs(title = "K-Medoides - Sum")
+
+grid.arrange(p1,p2,nrow = 1)
+grid.arrange(p3,p4,nrow = 1)
+```
+
+```{r}
+set.seed(100)
+clust3 <- kmeans(midist, centers = 6, nstart = 20)
+table(clust3$cluster)
+```
+```{r}
+p1 = fviz_cluster(object = list(data=schools_cluster, cluster=clust3$cluster), stand = FALSE,
+             ellipse.type = "convex", geom = "point", show.clust.cent = FALSE,
+             labelsize = 8)  +
+  labs(title = "K-MEDIAS + Proyeccion PCA",
+       subtitle = "Dist manhattan, K=4") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+p2 = fviz_cluster(object = list(data=schools_cluster, cluster=clust3$cluster), stand = FALSE,
+             ellipse.type = "convex", geom = "point", show.clust.cent = FALSE,
+             labelsize = 8, axes = 3:4)  +
+  labs(title = "K-MEDIAS + Proyeccion PCA",
+       subtitle = "Dist manhattan, K=4") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+```{r}
+plot(silhouette(clust3$cluster, midist), col=rainbow(6), border=NA, main = "K-MEDIAS")
+clust4 <- pam(schools_cluster, k = 4)
+plot(silhouette(clust4$clustering, midist), col=rainbow(4), border=NA, main = "K-MEDOIDES")
+
+
+
+
+sil = data.frame(silhouette(clust3$cluster, midist))
+
+mal = sil$sil_width < -0.045
+malClasifiS = sil[mal,]
+```
+
+```{r}
+misclust = factor(clust3$cluster)
+
+mediasCluster = aggregate(schools_cluster, by = list("cluster" = misclust), mean)[,-1]
+rownames(mediasCluster) = paste0("c",1:6)
+kable(t(round(mediasCluster,2)))
+```
+
+```{r}
+par(mar = c(5, 4, 4, 2) + 0.1)
+matplot(t(mediasCluster), type = "l", col = rainbow(6), ylab = "", xlab = "", lwd = 2,
+        lty = 1, main = "Perfil medio de los clusters", xaxt = "n")
+axis(side = 1, at = 1:ncol(schools_cluster), labels = FALSE)
+text(x = 1:ncol(schools_cluster), y = par("usr")[3] - 0.3, 
+     labels = colnames(schools_cluster), srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+legend("topleft", as.character(1:6), col = rainbow(6), lwd = 2, ncol = 3, bty = "n")
+```
+
+
+```{r}
+res.pca = PCA(prueba_bin, scale.unit = TRUE, graph = FALSE, ncp = 10)
+eig.val <- get_eigenvalue(res.pca)
+VPmedio = 100 * (1/nrow(eig.val))
+fviz_eig(res.pca, addlabels = TRUE) +
+  geom_hline(yintercept=VPmedio, linetype=2, color="red")
+kable(eig.val[1:6,])
+K = 4
+res.pca = PCA(prueba_bin, scale.unit = TRUE, graph = FALSE, ncp = K)
+```
+
+```{r}
+fviz_pca_var(res.pca, axes = c(1,2), repel = TRUE, col.var = "contrib",
+              
+             select.var = list(contrib = 16) ,
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             
+             labelsize = 4,
+             
+             title = 'Variables PCA - Loadings PC1 y PC2')
+
+
+fviz_pca_var(res.pca, axes = c(3,4), repel = TRUE, col.var = "contrib",
+             select.var = list(contrib=16),
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             
+             labelsize = 4,
+             
+             title = 'Variables PCA - Loadings PC3 y PC4')
+```
+
+```{r}
+n_clusters = as.data.frame(clust3$cluster)
+```
+
+
+```{r}
+#library(xlsx)
+#write.xlsx(prueba_bin, "DatosSecundaria.xlsx", row.names = FALSE)
+```
+
+```{r}
+table(clust4$cluster)
+```
+
+
+```{r}
+p1 = fviz_cluster(object = list(data=schools_cluster, cluster=clust4$cluster), stand = FALSE,
+             ellipse.type = "convex", geom = "point", show.clust.cent = FALSE,
+             labelsize = 8)  +
+  labs(title = "K-MEDIAS + Proyeccion PCA",
+       subtitle = "Dist manhattan, K=4") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+p2 = fviz_cluster(object = list(data=schools_cluster, cluster=clust4$cluster), stand = FALSE,
+             ellipse.type = "convex", geom = "point", show.clust.cent = FALSE,
+             labelsize = 8, axes = 3:4)  +
+  labs(title = "K-MEDIAS + Proyeccion PCA",
+       subtitle = "Dist manhattan, K=4") +
+  theme_bw() +
+  theme(legend.position = "bottom")
+grid.arrange(p1, p2, nrow = 1)
+```
+
+```{r}
+misclust = factor(clust4$cluster)
+
+mediasCluster = aggregate(schools_cluster, by = list("cluster" = misclust), mean)[,-1]
+rownames(mediasCluster) = paste0("c",1:4)
+kable(t(round(mediasCluster,2)))
+```
+
+```{r}
+par(mar = c(5, 4, 4, 2) + 0.1)
+matplot(t(mediasCluster), type = "l", col = rainbow(4), ylab = "", xlab = "", lwd = 2,
+        lty = 1, main = "Perfil medio de los clusters", xaxt = "n")
+axis(side = 1, at = 1:ncol(schools_cluster), labels = FALSE)
+text(x = 1:ncol(schools_cluster), y = par("usr")[3] - 0.3, 
+     labels = colnames(schools_cluster), srt = 45, adj = 1, xpd = TRUE, cex = 0.8)
+legend("topleft", as.character(1:4), col = rainbow(4), lwd = 2, ncol = 3, bty = "n")
+```
+
+-Cluster 1 (rojo): Comedor con cocina propia. Usualmente sin gimnasio, salon de actos, pilota ni piscina. Pero si que presenta aula de idiomas ofreciendo frances y aleman (sobretodo). Centros desde infantil hasta bachiller, pero sin FP. Usualmente con pocos alumnos matriculados. Se sitúan con una densidad de población alta (2 más alta). Zonas bien comunicadas por metro y no presenta transporte privado.Media de Bachiller baja (2 peor) pero mejora un poco en la PAU (2 peor). Alto numero de extraescolares donde destacan: Judo, Programación y Baloncesto. Pocas becas, muchas excursiones. No suelen tener enfermería pero si Centro Tecnológico. Además de uso de herramientas tecnológicas como: Teams o Google Classroom. Capacidad para tratar alumnos con necesidades especiales. Generalmente privados (laicos+religiosos). Horario de mañana generalmente.
+
+-Cluster 2 (verde): Comedor con cocina propia. Instalaciones como: salón de actos, pilota, piscina (no cursos de verano). Unicamente línea en castellano y en valenciano. Ofreciendo francés como 3/4 idioma.  Centros desde infantil hasta bachiller. Presenta PIL. Cluster con el segundo número de matriculados más elevado. Se sitúan en barrios con la densidad de población más alta. Comunicado por bus aunque algunos también disponen de transporte privado. Media de expediente más alta de los clústers pero disminuye en la nota PAU (2 mejor). No presenta un gran número de extraescolares. Algunos centros presentan becas. Centros privados y religiosos, con horarios tanto ampliados como solo de mañanas.
+
+-Cluster 3 (azul): La mayoría de centros de este clúster presentan gimmnasio, salon de actos y aula de idiomas (ofrecen linea en valenciano y castellano además de francés o alemán como 3/4 idioma). Son centros desde infantil hasta bachiller, con un elevado número de matriculados. Además en cuanto a nota media de bachiller es la segunda más alta como en la PAU (pero baja). Barrios con poca población (2 más baja). Mal comunicado (ni bus ni metro), pero presentan transporte privado. Comedor con cocina propia. Gran número de extraescolares destacando: futbol, ajedrez o guitarra. Centros que presentan herramientas propias y con capacidad de tratar alumnos con necesidades especiales. Centros privados y religiosos con horarios de mañana.
+
+-Cluster 4 (morado):No presentan comedor pero si cafetería (comida de catering). Suelen presentar gimnasio y realizar cursos de verano (no suelen tener piscina). Destacan en cuanto idiomas por haber centros que ofrecen italiano como 3/4 idioma. Son centros de secundaria y bachiller unicamente, además de FP. Numero de matriculados segundo más bajo, las notas de bachiller y PAU (se mejora) son las peores. Se sitúan barrios poco poblados y con algunas conexiones de bus y metro (no transporte privado). No muchas extraescolares ni servicios. Además de ser centros públicos y laicos con horarios tanto ampliados como solo de mañanas.
+
+```{r}
+fviz_pca_var(res.pca, axes = c(1,2), repel = TRUE, col.var = "contrib",
+              
+             select.var = list(contrib = 16) ,
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             
+             labelsize = 4,
+             
+             title = 'Variables PCA - Loadings PC1 y PC2')
+
+
+fviz_pca_var(res.pca, axes = c(3,4), repel = TRUE, col.var = "contrib",
+             select.var = list(contrib=16),
+             gradient.cols = c("#00AFBB", "#E7B800", "#FC4E07"),
+             
+             labelsize = 4,
+             
+             title = 'Variables PCA - Loadings PC3 y PC4')
+```
+
